@@ -13,6 +13,43 @@ from byaldi.objects import Result
 
 
 class IndexManager:
+    """
+    A class to manage the indexing of documents and images.
+    Attributes:
+        index_root (str): The root directory for storing index files.
+        verbose (int): Verbosity level for logging.
+        collection (dict): A collection of in-memory images.
+        indexed_embeddings (list): A list of indexed embeddings.
+        embed_id_to_doc_id (dict): Mapping from embedding ID to document ID.
+        doc_id_to_metadata (dict): Mapping from document ID to metadata.
+        doc_ids_to_file_names (dict): Mapping from document IDs to file names.
+        doc_ids (set): A set of document IDs.
+        highest_doc_id (int): The highest document ID in the index.
+        full_document_collection (bool): Flag to store the full document collection.
+        index_name (str): The name of the current index.
+        max_image_width (int): Maximum width for stored images.
+        max_image_height (int): Maximum height for stored images.
+        model_name (str): The name of the model used for indexing.
+    Methods:
+        create_index(index_name, store_collection_with_index=False, overwrite=False, max_image_width=None, max_image_height=None):
+            Creates a new index with the specified name and options.
+        add_to_index(input_item, embed_func, doc_id=None, metadata=None):
+            Adds items to the index using the provided embedding function.
+        _process_directory(directory, embed_func, base_doc_id, metadata):
+            Processes a directory of items and adds them to the index.
+        _process_and_add_to_index(item, embed_func, doc_id, metadata=None):
+            Processes a single item and adds it to the index.
+        _add_to_index(image, embed_func, doc_id, page_id=1, metadata=None):
+            Adds a processed image to the index.
+        search(query, score_func, k=10, return_base64_results=None):
+            Searches the index for the top-k results matching the query.
+        _export_index():
+            Exports the current index to disk.
+        load_index(index_name):
+            Loads an existing index from disk.
+        get_doc_ids_to_file_names():
+            Returns the mapping of document IDs to file names.
+    """
     def __init__(
         self,
         index_root: str = ".byaldi",
@@ -31,12 +68,12 @@ class IndexManager:
         self.index_name = None
         self.max_image_width = None
         self.max_image_height = None
-        self.model_type = None
         self.model_name = None
 
     def create_index(
         self,
         index_name: str,
+        model_name: str,
         store_collection_with_index: bool = False,
         overwrite: bool = False,
         max_image_width: Optional[int] = None,
@@ -59,93 +96,7 @@ class IndexManager:
         self.max_image_width = max_image_width
         self.max_image_height = max_image_height
         self.highest_doc_id = -1
-        self.model_type = model_type
         self.model_name = model_name
-
-    def load_index(self, index_name: str):
-        index_path = Path(self.index_root) / Path(index_name)
-        if not index_path.exists():
-            raise ValueError(f"Index {index_name} does not exist.")
-
-        self.index_name = index_name
-        index_config = srsly.read_gzip_json(index_path / "index_config.json.gz")
-        self.full_document_collection = index_config.get("full_document_collection", False)
-        self.max_image_width = index_config.get("max_image_width", None)
-        self.max_image_height = index_config.get("max_image_height", None)
-        self.model_type = index_config.get("model_type", None)
-        self.model_name = index_config.get("model_name", None)
-
-        # Load embeddings
-        embeddings_path = index_path / "embeddings"
-        embedding_files = sorted(embeddings_path.glob("embeddings_*.pt"), key=lambda x: int(x.stem.split("_")[1]))
-        self.indexed_embeddings = []
-        for file in embedding_files:
-            self.indexed_embeddings.extend(torch.load(file))
-
-        # Load other data
-        self.embed_id_to_doc_id = srsly.read_gzip_json(index_path / "embed_id_to_doc_id.json.gz")
-        self.embed_id_to_doc_id = {int(k): v for k, v in self.embed_id_to_doc_id.items()}
-        self.highest_doc_id = max(int(entry["doc_id"]) for entry in self.embed_id_to_doc_id.values())
-        self.doc_ids = set(int(entry["doc_id"]) for entry in self.embed_id_to_doc_id.values())
-        self.doc_ids_to_file_names = srsly.read_gzip_json(index_path / "doc_ids_to_file_names.json.gz")
-        self.doc_ids_to_file_names = {int(k): v for k, v in self.doc_ids_to_file_names.items()}
-        self.doc_id_to_metadata = srsly.read_gzip_json(index_path / "metadata.json.gz")
-        self.doc_id_to_metadata = {int(k): v for k, v in self.doc_id_to_metadata.items()}
-
-        # Load collection if using in-memory collection
-        if self.full_document_collection:
-            collection_path = index_path / "collection"
-            json_files = sorted(collection_path.glob("*.json.gz"), key=lambda x: int(x.stem.split(".")[0]))
-            for json_file in json_files:
-                loaded_data = srsly.read_gzip_json(json_file)
-                self.collection.update({int(k): v for k, v in loaded_data.items()})
-
-        if self.verbose > 0:
-            print(f"Index {index_name} loaded successfully.")
-
-    def _export_index(self):
-        if self.index_name is None:
-            raise ValueError("No index name specified. Cannot export.")
-
-        index_path = Path(self.index_root) / Path(self.index_name)
-        index_path.mkdir(parents=True, exist_ok=True)
-
-        # Save embeddings
-        embeddings_path = index_path / "embeddings"
-        embeddings_path.mkdir(exist_ok=True)
-        num_embeddings = len(self.indexed_embeddings)
-        chunk_size = 500
-        for i in range(0, num_embeddings, chunk_size):
-            chunk = self.indexed_embeddings[i : i + chunk_size]
-            torch.save(chunk, embeddings_path / f"embeddings_{i}.pt")
-
-        # Save index config
-        index_config = {
-            "full_document_collection": self.full_document_collection,
-            "highest_doc_id": self.highest_doc_id,
-            "resize_stored_images": (True if self.max_image_width and self.max_image_height else False),
-            "max_image_width": self.max_image_width,
-            "max_image_height": self.max_image_height,
-            "model_type": self.model_type,
-            "model_name": self.model_name,
-        }
-        srsly.write_gzip_json(index_path / "index_config.json.gz", index_config)
-
-        # Save other data
-        srsly.write_gzip_json(index_path / "embed_id_to_doc_id.json.gz", self.embed_id_to_doc_id)
-        srsly.write_gzip_json(index_path / "doc_ids_to_file_names.json.gz", self.doc_ids_to_file_names)
-        srsly.write_gzip_json(index_path / "metadata.json.gz", self.doc_id_to_metadata)
-
-        # Save collection if using in-memory collection
-        if self.full_document_collection:
-            collection_path = index_path / "collection"
-            collection_path.mkdir(exist_ok=True)
-            for i in range(0, len(self.collection), 500):
-                chunk = dict(list(self.collection.items())[i : i + 500])
-                srsly.write_gzip_json(collection_path / f"{i}.json.gz", chunk)
-
-        if self.verbose > 0:
-            print(f"Index exported to {index_path}")
 
     def add_to_index(
         self,
@@ -153,6 +104,7 @@ class IndexManager:
         embed_func,
         doc_id: Optional[Union[int, List[int]]] = None,
         metadata: Optional[List[Dict[str, Union[str, int]]]] = None,
+        store_collection_with_index: Optional[bool] = None,
     ) -> Dict[int, str]:
         if self.index_name is None:
             raise ValueError("No index loaded. Use create_index() first.")
@@ -300,30 +252,114 @@ class IndexManager:
         for q in queries:
             scores = score_func(q, self.indexed_embeddings)
             
-            # Handle different score shapes
-            if isinstance(scores, torch.Tensor):
-                if scores.dim() == 1:
-                    top_pages = scores.argsort(descending=True)[:k].tolist()
-                else:
-                    top_pages = scores.argsort(dim=1, descending=True)[0, :k].tolist()
-            else:  # numpy array
-                top_pages = scores.argsort()[::-1][:k].tolist()
-
+            # Ensure scores is a 2D tensor
+            if scores.dim() == 1:
+                scores = scores.unsqueeze(0)
+            
+            top_k_values, top_k_indices = scores.topk(k, dim=1)
+            
             query_results = []
-            for embed_id in top_pages:
-                doc_info = self.embed_id_to_doc_id[int(embed_id)]
-                result = Result(
-                    doc_id=doc_info["doc_id"],
-                    page_num=int(doc_info["page_id"]),
-                    score=float(scores[0][embed_id] if isinstance(scores, torch.Tensor) and scores.dim() > 1 else scores[embed_id]),
-                    metadata=self.doc_id_to_metadata.get(int(doc_info["doc_id"]), {}),
-                    base64=(self.collection.get(int(embed_id)) if return_base64_results else None)
-                )
-                query_results.append(result)
-
+            for values, indices in zip(top_k_values, top_k_indices):
+                for score, embed_id in zip(values.tolist(), indices.tolist()):
+                    doc_info = self.embed_id_to_doc_id[int(embed_id)]
+                    result = Result(
+                        doc_id=doc_info["doc_id"],
+                        page_num=int(doc_info["page_id"]),
+                        score=float(score),
+                        metadata=self.doc_id_to_metadata.get(int(doc_info["doc_id"]), {}),
+                        base64=(self.collection.get(int(embed_id)) if return_base64_results else None)
+                    )
+                    query_results.append(result)
+            
             results.append(query_results)
 
         return results[0] if isinstance(query, str) else results
+    def _export_index(self):
+        if self.index_name is None:
+            raise ValueError("No index name specified. Cannot export.")
+
+        index_path = Path(self.index_root) / Path(self.index_name)
+        index_path.mkdir(parents=True, exist_ok=True)
+
+        # Save embeddings
+        embeddings_path = index_path / "embeddings"
+        embeddings_path.mkdir(exist_ok=True)
+        num_embeddings = len(self.indexed_embeddings)
+        chunk_size = 500
+        for i in range(0, num_embeddings, chunk_size):
+            chunk = self.indexed_embeddings[i : i + chunk_size]
+            torch.save(chunk, embeddings_path / f"embeddings_{i}.pt")
+
+        # Save index config
+        index_config = {
+            "model_name": self.model_name,
+            "full_document_collection": self.full_document_collection,
+            "highest_doc_id": self.highest_doc_id,
+            "resize_stored_images": (True if self.max_image_width and self.max_image_height else False),
+            "max_image_width": self.max_image_width,
+            "max_image_height": self.max_image_height,
+        }
+        srsly.write_gzip_json(index_path / "index_config.json.gz", index_config)
+
+        # Save embed_id_to_doc_id mapping
+        srsly.write_gzip_json(index_path / "embed_id_to_doc_id.json.gz", self.embed_id_to_doc_id)
+
+        # Save doc_ids_to_file_names
+        srsly.write_gzip_json(index_path / "doc_ids_to_file_names.json.gz", self.doc_ids_to_file_names)
+
+        # Save metadata
+        srsly.write_gzip_json(index_path / "metadata.json.gz", self.doc_id_to_metadata)
+
+        # Save collection if using in-memory collection
+        if self.full_document_collection:
+            collection_path = index_path / "collection"
+            collection_path.mkdir(exist_ok=True)
+            for i in range(0, len(self.collection), 500):
+                chunk = dict(list(self.collection.items())[i : i + 500])
+                srsly.write_gzip_json(collection_path / f"{i}.json.gz", chunk)
+
+        if self.verbose > 0:
+            print(f"Index exported to {index_path}")
+
+    def load_index(self, index_name: str):
+        index_path = Path(self.index_root) / Path(index_name)
+        if not index_path.exists():
+            raise ValueError(f"Index {index_name} does not exist.")
+
+        self.index_name = index_name
+        index_config = srsly.read_gzip_json(index_path / "index_config.json.gz")
+        self.model_name = index_config["model_name"]
+        self.full_document_collection = index_config.get("full_document_collection", False)
+        self.max_image_width = index_config.get("max_image_width", None)
+        self.max_image_height = index_config.get("max_image_height", None)
+
+        # Load embeddings
+        embeddings_path = index_path / "embeddings"
+        embedding_files = sorted(embeddings_path.glob("embeddings_*.pt"), key=lambda x: int(x.stem.split("_")[1]))
+        self.indexed_embeddings = []
+        for file in embedding_files:
+            self.indexed_embeddings.extend(torch.load(file))
+
+        # Load other data
+        self.embed_id_to_doc_id = srsly.read_gzip_json(index_path / "embed_id_to_doc_id.json.gz")
+        self.embed_id_to_doc_id = {int(k): v for k, v in self.embed_id_to_doc_id.items()}
+        self.highest_doc_id = max(int(entry["doc_id"]) for entry in self.embed_id_to_doc_id.values())
+        self.doc_ids = set(int(entry["doc_id"]) for entry in self.embed_id_to_doc_id.values())
+        self.doc_ids_to_file_names = srsly.read_gzip_json(index_path / "doc_ids_to_file_names.json.gz")
+        self.doc_ids_to_file_names = {int(k): v for k, v in self.doc_ids_to_file_names.items()}
+        self.doc_id_to_metadata = srsly.read_gzip_json(index_path / "metadata.json.gz")
+        self.doc_id_to_metadata = {int(k): v for k, v in self.doc_id_to_metadata.items()}
+
+        # Load collection if using in-memory collection
+        if self.full_document_collection:
+            collection_path = index_path / "collection"
+            json_files = sorted(collection_path.glob("*.json.gz"), key=lambda x: int(x.stem.split(".")[0]))
+            for json_file in json_files:
+                loaded_data = srsly.read_gzip_json(json_file)
+                self.collection.update({int(k): v for k, v in loaded_data.items()})
+
+        if self.verbose > 0:
+            print(f"Index {index_name} loaded successfully.")
 
     def get_doc_ids_to_file_names(self):
         return self.doc_ids_to_file_names
