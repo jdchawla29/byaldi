@@ -7,7 +7,7 @@ from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 
 
 class DSEModel:
-    def __init__(self, model_name: str = "MrLight/dse-qwen2-2b-mrl-v1", device: str = "cuda", use_flash_attention: bool = True):
+    def __init__(self, model_name: str = "MrLight/dse-qwen2-2b-mrl-v1", device: str = "cuda"):
         self.device = device
         self.pretrained_model_name_or_path = model_name
         
@@ -19,7 +19,7 @@ class DSEModel:
         )
         self.model = Qwen2VLForConditionalGeneration.from_pretrained(
             model_name,
-            # attn_implementation="flash_attention_2" if use_flash_attention else "eager",
+            attn_implementation="eager",
             torch_dtype=torch.bfloat16,
             device_map="auto"
         ).to(device).eval()
