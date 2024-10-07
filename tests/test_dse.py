@@ -159,7 +159,7 @@ def test_add_to_index(model_type: str):
 if __name__ == "__main__":
     print("Starting tests...")
 
-    for model_type in ["DSE"]:
+    for model_type in ["ColPali","DSE"]:
         print(f"\n\n----------------- {model_type} Model Tests -----------------")
         print(f"\n-----------------  Single PDF test  -----------------")
         test_model(model_type)

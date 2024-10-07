@@ -69,17 +69,17 @@ class IndexManager:
         self.max_image_width = None
         self.max_image_height = None
         self.model_name = None
+        self.model_type = None
 
     def create_index(
         self,
         index_name: str,
         model_name: str,
+        model_type: str,
         store_collection_with_index: bool = False,
         overwrite: bool = False,
         max_image_width: Optional[int] = None,
         max_image_height: Optional[int] = None,
-        model_type: str = None,
-        model_name: str = None,
     ):
         if self.index_name is not None and not overwrite:
             raise ValueError(f"An index named {self.index_name} is already loaded.")
@@ -97,6 +97,7 @@ class IndexManager:
         self.max_image_height = max_image_height
         self.highest_doc_id = -1
         self.model_name = model_name
+        self.model_type = model_type
 
     def add_to_index(
         self,
@@ -274,6 +275,7 @@ class IndexManager:
             results.append(query_results)
 
         return results[0] if isinstance(query, str) else results
+    
     def _export_index(self):
         if self.index_name is None:
             raise ValueError("No index name specified. Cannot export.")
@@ -293,6 +295,7 @@ class IndexManager:
         # Save index config
         index_config = {
             "model_name": self.model_name,
+            "model_type": self.model_type,
             "full_document_collection": self.full_document_collection,
             "highest_doc_id": self.highest_doc_id,
             "resize_stored_images": (True if self.max_image_width and self.max_image_height else False),
@@ -329,6 +332,7 @@ class IndexManager:
         self.index_name = index_name
         index_config = srsly.read_gzip_json(index_path / "index_config.json.gz")
         self.model_name = index_config["model_name"]
+        self.model_type = index_config["model_type"]
         self.full_document_collection = index_config.get("full_document_collection", False)
         self.max_image_width = index_config.get("max_image_width", None)
         self.max_image_height = index_config.get("max_image_height", None)
