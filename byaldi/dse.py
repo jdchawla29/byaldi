@@ -19,7 +19,7 @@ class DSEModel:
         )
         self.model = Qwen2VLForConditionalGeneration.from_pretrained(
             model_name,
-            attn_implementation="flash_attention_2" if use_flash_attention else "eager",
+            # attn_implementation="flash_attention_2" if use_flash_attention else "eager",
             torch_dtype=torch.bfloat16,
             device_map="auto"
         ).to(device).eval()
